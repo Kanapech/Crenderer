@@ -86,9 +86,10 @@ int main(int argc, char** argv) {
         std::istringstream iss(ligne.c_str());
         if(ligne.rfind("v ", 0) == 0){
             iss >> v >> x >> y >> z;
-            vert[0][vcount] = (x+1.)*width/2. ; vert[1][vcount] = (y+1.)*height/2.; vert[2][vcount] = z;
+            //vert[0][vcount] = (x+1.)*width/2. ; vert[1][vcount] = (y+1.)*height/2.; vert[2][vcount] = (z+1.)*height/2.;
+            vert[0][vcount] = x; vert[1][vcount] = y; vert[2][vcount] = z;
             //cout << vert[0][vcount] << vert[1][vcount] << vert[2][vcount] << endl;
-            line(vert[0][vcount], vert[1][vcount], vert[0][vcount], vert[1][vcount], image, red);
+            //line(vert[0][vcount], vert[1][vcount], vert[0][vcount], vert[1][vcount], image, red);
             vcount++;            
         }
         if(ligne.rfind("f ", 0) == 0){
@@ -102,7 +103,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    for(int i = 0; i<fcount; i++){
+    /*for(int i = 0; i<fcount; i++){
         Point2D t0, t1, t2;
         TGAColor couleur(std::rand()%255,std::rand()%255,std::rand()%255,255);
         t0.x = vert[0][faces[0][i]];
@@ -115,8 +116,28 @@ int main(int argc, char** argv) {
         t2.y = vert[1][faces[2][i]];
 
         triangle(t0, t1, t2, image, couleur);
-    }
-
+    }*/
+    int tcount=0;
+    Point3D light_dir; light_dir.x = 0; light_dir.y = 0; light_dir.z = -1;
+    for (int i=0; i<fcount; i++) { 
+        std::vector<int> face{faces[0][i], faces[1][i], faces[2][i]}; 
+        Point2D screen_coords[3]; 
+        Point3D world_coords[3]; 
+        for (int j=0; j<3; j++) { 
+            Point3D v; v.x = vert[0][face[j]]; v.y = vert[1][face[j]]; v.z = vert[2][face[j]];
+            Point2D v2; v2.x = (v.x+1.)*width/2.; v2.y = (v.y+1.)*height/2.;
+            screen_coords[j] = v2;
+            world_coords[j]  = v; 
+        } 
+        Point3D n = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]);
+        n.normalize();
+        float intensity = n*light_dir;
+        if (intensity>0){
+            tcount++;
+            triangle(screen_coords[0], screen_coords[1], screen_coords[2], image, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
+        }
+    } 
+    cout << tcount << endl;
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");
 
