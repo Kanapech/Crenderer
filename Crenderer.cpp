@@ -13,8 +13,8 @@ const TGAColor red   = TGAColor(255, 0,   0,   255);
 const TGAColor blue  = TGAColor(0, 0,   255,   255);
 const TGAColor green  = TGAColor(0, 255,   0,   255);
 
-const int width = 600;
-const int height = 600;
+const int width = 1000;
+const int height = 1000;
 
 void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
     bool steep = false;
@@ -47,24 +47,60 @@ void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
     }
 }
 
-void triangle(Point2D t0, Point2D t1, Point2D t2, TGAImage &image, TGAColor color) {
-    if (t0.y==t1.y && t0.y==t2.y) return;
-    if (t0.y>t1.y) std::swap(t0, t1);
-    if (t0.y>t2.y) std::swap(t0, t2);
-    if (t1.y>t2.y) std::swap(t1, t2);
-    int total_height = t2.y-t0.y;
-    for (int i=0; i<total_height; i++) {
-        bool second_half = i>t1.y-t0.y || t1.y==t0.y;
-        int segment_height = second_half ? t2.y-t1.y : t1.y-t0.y;
-        float alpha = (float)i/total_height;
-        float beta  = (float)(i-(second_half ? t1.y-t0.y : 0))/segment_height;
-        Point2D A = t0 + (t2-t0)*alpha;
-        Point2D B = second_half ? t1 + (t2-t1)*beta : t0 + (t1-t0)*beta;
-        if (A.x>B.x) std::swap(A, B);
-        for (int j=A.x; j<=B.x; j++) {
-            image.set(j, t0.y+i, color);
+Point3D cross(Point3D v1,Point3D v2) {
+    return Point3D{v1.y*v2.z - v1.z*v2.y, v1.z*v2.x - v1.x*v2.z, v1.x*v2.y - v1.y*v2.x};
+}
+
+Point3D barycentric(Point3D A, Point3D B, Point3D C, Point3D P) {
+    Point3D s[2];
+
+    s[0].x = C.x-A.x;
+    s[0].y = B.x-A.x;
+    s[0].z = A.x-P.x;
+
+    s[1].x = C.y-A.y;
+    s[1].y = B.y-A.y;
+    s[1].z = A.y-P.y;
+
+    Point3D u = cross(s[0], s[1]);
+    if (std::abs(u.z)>1e-2)
+        return Point3D{1.f-(u.x+u.y)/u.z, u.y/u.z, u.x/u.z};
+    return Point3D{-1,1,1};
+}
+
+void triangle(Point3D *pts, float *zbuffer, TGAImage &image, TGAColor color) {
+    Point2D bboxmin{std::numeric_limits<float>::max(), std::numeric_limits<float>::max()};
+    Point2D bboxmax{-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max()};
+    Point2D clamp{(float)image.get_width()-1, (float) image.get_height()-1};
+
+    for (int i=0; i<3; i++) {
+        bboxmin.x = std::max(0.f, std::min(bboxmin.x, pts[i].x));
+        bboxmax.x = std::min(clamp.x, std::max(bboxmax.x, pts[i].x));
+
+        bboxmin.y = std::max(0.f, std::min(bboxmin.y, pts[i].y));
+        bboxmax.y = std::min(clamp.y, std::max(bboxmax.y, pts[i].y));
+    }
+
+    Point3D P;
+    for (P.x=bboxmin.x; P.x<=bboxmax.x; P.x++) {
+        for (P.y=bboxmin.y; P.y<=bboxmax.y; P.y++) {
+            Point3D bc_screen  = barycentric(pts[0], pts[1], pts[2], P);
+            if (bc_screen.x<0 || bc_screen.y<0 || bc_screen.z<0) continue;
+            P.z = 0;
+            P.z += pts[0].z*bc_screen.x;
+            P.z += pts[1].z*bc_screen.y;
+            P.z += pts[2].z*bc_screen.z;
+
+            if (zbuffer[int(P.x+P.y*width)]<P.z) {
+                zbuffer[int(P.x+P.y*width)] = P.z;
+                image.set(P.x, P.y, color);
+            }
         }
     }
+}
+
+Point3D world2screen(Point3D v) {
+    return Point3D{(float) int((v.x+1.)*width/2.+.5), (float) int((v.y+1.)*height/2.+.5), v.z};
 }
 
 int main(int argc, char** argv) {
@@ -86,7 +122,6 @@ int main(int argc, char** argv) {
         std::istringstream iss(ligne.c_str());
         if(ligne.rfind("v ", 0) == 0){
             iss >> v >> x >> y >> z;
-            //vert[0][vcount] = (x+1.)*width/2. ; vert[1][vcount] = (y+1.)*height/2.; vert[2][vcount] = (z+1.)*height/2.;
             vert[0][vcount] = x; vert[1][vcount] = y; vert[2][vcount] = z;
             //cout << vert[0][vcount] << vert[1][vcount] << vert[2][vcount] << endl;
             //line(vert[0][vcount], vert[1][vcount], vert[0][vcount], vert[1][vcount], image, red);
@@ -103,44 +138,30 @@ int main(int argc, char** argv) {
         }
     }
 
-    /*for(int i = 0; i<fcount; i++){
-        Point2D t0, t1, t2;
-        TGAColor couleur(std::rand()%255,std::rand()%255,std::rand()%255,255);
-        t0.x = vert[0][faces[0][i]];
-        t0.y = vert[1][faces[0][i]];
+    Point3D light_dir{0,0,-1};
+    float *zbuffer = new float[width*height];
+    for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
 
-        t1.x = vert[0][faces[1][i]];
-        t1.y = vert[1][faces[1][i]];
-
-        t2.x = vert[0][faces[2][i]];
-        t2.y = vert[1][faces[2][i]];
-
-        triangle(t0, t1, t2, image, couleur);
-    }*/
-    int tcount=0;
-    Point3D light_dir; light_dir.x = 0; light_dir.y = 0; light_dir.z = -1;
-    for (int i=0; i<fcount; i++) { 
-        std::vector<int> face{faces[0][i], faces[1][i], faces[2][i]}; 
-        Point2D screen_coords[3]; 
+    for (int i=0; i<fcount; i++) {
+        std::vector<int> face{faces[0][i], faces[1][i], faces[2][i]};
+        Point3D pts[3];
         Point3D world_coords[3]; 
-        for (int j=0; j<3; j++) { 
-            Point3D v; v.x = vert[0][face[j]]; v.y = vert[1][face[j]]; v.z = vert[2][face[j]];
-            Point2D v2; v2.x = (v.x+1.)*width/2.; v2.y = (v.y+1.)*height/2.;
-            screen_coords[j] = v2;
-            world_coords[j]  = v; 
+        for (int i=0; i<3; i++){
+            Point3D v{vert[0][face[i]], vert[1][face[i]], vert[2][face[i]]};
+            world_coords[i] = v;
+            pts[i] = world2screen(v);
         } 
         Point3D n = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]);
         n.normalize();
         float intensity = n*light_dir;
         if (intensity>0){
-            tcount++;
-            triangle(screen_coords[0], screen_coords[1], screen_coords[2], image, TGAColor(intensity*255, intensity*255, intensity*255, 255)); 
+            triangle(pts, zbuffer, image, TGAColor(intensity*255, intensity*255, intensity*255, 255));
         }
-    } 
-    cout << tcount << endl;
+    }
+
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");
 
     file.close(); 
-    return 0;
+    return EXIT_SUCCESS;
 }

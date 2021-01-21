@@ -1,47 +1,26 @@
 struct Point2D { 
-    int x, y;
+    float x, y;
     inline Point2D operator-(Point2D p) {
-        Point2D r;
-        r.x = x-p.x;
-        r.y = y-p.y;
-        return r;
+        return Point2D{x-p.x, y-p.y};
     }
     inline Point2D operator+(Point2D p) {
-        Point2D r;
-        r.x = x+p.x;
-        r.y = y+p.y;
-        return r;
+        return Point2D{x+p.x, y+p.y};
     }
     inline Point2D operator *(float f){
-        Point2D r;
-        r.x = x*f;
-        r.y = y*f;
-        return r;
+        return Point2D{x*f, y*f};
     }          
 };
 
 struct Point3D { 
     float x, y, z;
     inline Point3D operator-(Point3D p) {
-        Point3D r;
-        r.x = x-p.x;
-        r.y = y-p.y;
-        r.z = z-p.z;
-        return r;
+        return Point3D{x-p.x, y-p.y, z-p.z};
     }
     inline Point3D operator ^(Point3D p) {
-        Point3D r;
-        r.x = y*p.z-z*p.y;
-        r.y = z*p.x-x*p.z;
-        r.z = x*p.y-y*p.x;
-        return r; 
+        return Point3D{y*p.z-z*p.y, z*p.x-x*p.z, x*p.y-y*p.x}; 
     }
     inline Point3D operator *(float f){
-        Point3D r;
-        r.x = x*f;
-        r.y = y*f;
-        r.z = z*f;
-        return r;
+        return Point3D{x*f, y*f, z*f};
     }  
     inline float operator *(Point3D p){
         return x*p.x + y*p.y+ z*p.z;
