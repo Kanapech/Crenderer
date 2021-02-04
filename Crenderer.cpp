@@ -14,9 +14,12 @@ const TGAColor green  = TGAColor(0, 255,   0,   255);
 
 const int width = 1000;
 const int height = 1000;
+const int depth = 255;
+
 
 Model *model;
 TGAImage image(width, height, TGAImage::RGB);
+Vec3f camera{0, 0, 3};
 
 void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
     bool steep = false;
@@ -66,16 +69,16 @@ Vec3f barycentric(Vec3f A, Vec3f B, Vec3f C, Vec3f P) {
     return Vec3f(-1,1,1);
 }
 
-void triangle(Model* model, Vec3f *pts, float *zbuffer, TGAImage &image, float intensity, Vec2i* uv) {
-    Vec2f bboxmin(std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
-    Vec2f bboxmax(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
-    Vec2f clamp(image.get_width()-1, image.get_height()-1);
+void triangle(Model* model, Vec3i *pts, float *zbuffer, TGAImage &image, float intensity, Vec2i* uv) {
+    Vec2i bboxmin(std::numeric_limits<int>::max(), std::numeric_limits<int>::max());
+    Vec2i bboxmax(-std::numeric_limits<int>::max(), -std::numeric_limits<int>::max());
+    Vec2i clamp(image.get_width()-1, image.get_height()-1);
 
     for (int i=0; i<3; i++) {
-        bboxmin.x = std::max(0.f, std::min(bboxmin.x, pts[i].x));
+        bboxmin.x = std::max(0, std::min(bboxmin.x, pts[i].x));
         bboxmax.x = std::min(clamp.x, std::max(bboxmax.x, pts[i].x));
 
-        bboxmin.y = std::max(0.f, std::min(bboxmin.y, pts[i].y));
+        bboxmin.y = std::max(0, std::min(bboxmin.y, pts[i].y));
         bboxmax.y = std::min(clamp.y, std::max(bboxmax.y, pts[i].y));
     }
 
@@ -100,7 +103,6 @@ void triangle(Model* model, Vec3f *pts, float *zbuffer, TGAImage &image, float i
             v += uv[2].y*bary.z;
             Vec2i uvP(u, v);
             
-
             if (zbuffer[int(P.x+P.y*width)]<P.z) {
                 zbuffer[int(P.x+P.y*width)] = P.z;
                 TGAColor color = model->diffuse(uvP);
@@ -114,22 +116,52 @@ Vec3f world2screen(Vec3f v) {
     return Vec3f(int((v.x+1.)*width/2.+.5), (float) int((v.y+1.)*height/2.+.5), v.z);
 }
 
+Vec3f matrix2vector(Matrix m){
+    return Vec3f(m[0][0]/m[3][0], m[1][0]/m[3][0], m[2][0]/m[3][0]);
+}
+
+Matrix vector2matrix(Vec3f v){
+    Matrix m(4, 1);
+    m[0][0] = v.x;
+    m[1][0] = v.y;
+    m[2][0] = v.z;
+    m[3][0] = 1.f;
+    return m;
+}
+
+Matrix viewport(float x, float y, int w, int h) {
+    Matrix m = Matrix::identity(4);
+    m[0][3] = x+w/2.f;
+    m[1][3] = y+h/2.f;
+    m[2][3] = depth/2.f;
+
+    m[0][0] = w/2.f;
+    m[1][1] = h/2.f;
+    m[2][2] = depth/2.f;
+    return m;
+}
+
 int main(int argc, char** argv) {
 
-    model = new Model("african_head.obj");
+    model = new Model("diablo3_pose.obj");
     Vec3f light_dir{0,0,-1};
     float *zbuffer = new float[width*height];
     for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
 
+    Matrix Projection = Matrix::identity(4);
+    Matrix ViewPort = viewport(width/8, height/8, width*3/4, height*3/4);
+    Projection[3][2] = -1.f/camera.z;
+
     for (int i=0; i<model->nbfaces(); i++) {
         vector<int> face = model->face(i);
 
-        Vec3f pts[3];
+        Vec3i pts[3];
         Vec3f world_coords[3]; 
         for (int j=0; j<3; j++){
             Vec3f v = model->vert(face[j]);
             world_coords[j] = v;
-            pts[j] = world2screen(v);
+            //pts[j] = world2screen(v);
+            pts[j] = matrix2vector(ViewPort*Projection*vector2matrix(v));
         }
 
         Vec3f n = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]);
