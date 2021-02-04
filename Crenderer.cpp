@@ -63,8 +63,9 @@ Vec3f barycentric(Vec3f A, Vec3f B, Vec3f C, Vec3f P) {
         s[i][1] = B[i]-A[i];
         s[i][2] = A[i]-P[i];
     }
+
     Vec3f u = cross(s[0], s[1]);
-    if (std::abs(u[2])>1e-2)
+    if (std::abs(u.z)>1e-2)
         return Vec3f(1.f-(u.x+u.y)/u.z, u.y/u.z, u.x/u.z);
     return Vec3f(-1,1,1);
 }
@@ -141,16 +142,33 @@ Matrix viewport(float x, float y, int w, int h) {
     return m;
 }
 
+Matrix lookat(Vec3f eye, Vec3f center, Vec3f up) {
+    Vec3f z = (eye-center).normalize();
+    Vec3f x = (up^z).normalize();
+    Vec3f y = (z^x).normalize();
+    Matrix res = Matrix::identity(4);
+    for (int i=0; i<3; i++) {
+        res[0][i] = x[i];
+        res[1][i] = y[i];
+        res[2][i] = z[i];
+        res[i][3] = -center[i];
+    }
+    return res;
+}
+
 int main(int argc, char** argv) {
 
-    model = new Model("diablo3_pose.obj");
+    model = new Model("african_head.obj");
     Vec3f light_dir{0,0,-1};
     float *zbuffer = new float[width*height];
     for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
 
+    Vec3f eye(0,0,1);
+    Vec3f center(0,0,0);
+    Matrix ModelView  = lookat(eye, center, Vec3f(0,1,0));
     Matrix Projection = Matrix::identity(4);
     Matrix ViewPort = viewport(width/8, height/8, width*3/4, height*3/4);
-    Projection[3][2] = -1.f/camera.z;
+    Projection[3][2] = -1.f/(eye-center).norm();
 
     for (int i=0; i<model->nbfaces(); i++) {
         vector<int> face = model->face(i);
@@ -161,7 +179,7 @@ int main(int argc, char** argv) {
             Vec3f v = model->vert(face[j]);
             world_coords[j] = v;
             //pts[j] = world2screen(v);
-            pts[j] = matrix2vector(ViewPort*Projection*vector2matrix(v));
+            pts[j] = matrix2vector(ViewPort*Projection*ModelView*vector2matrix(v));
         }
 
         Vec3f n = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]);

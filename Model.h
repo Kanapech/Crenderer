@@ -24,6 +24,7 @@ class Model {
         Vec2i uv(int iface, int nvert);
         TGAColor diffuse(Vec2i uv);
         vector<int> face(int idx);
+        Vec3f norm(int i, int j);
 };
 
 #endif //__MODEL_H__
