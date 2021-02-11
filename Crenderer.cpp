@@ -5,6 +5,7 @@
 #include "tgaimage.h"
 #include "Model.h"
 #include "geometry.h"
+#include "our_gl.h"
 using namespace std;
 
 const TGAColor white = TGAColor(255, 255, 255, 255);
@@ -19,7 +20,6 @@ const int depth = 255;
 
 Model *model;
 TGAImage image(width, height, TGAImage::RGB);
-Vec3f camera{0, 0, 3};
 
 void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
     bool steep = false;
@@ -113,10 +113,6 @@ void triangle(Model* model, Vec3i *pts, float *zbuffer, TGAImage &image, float i
     }
 }
 
-Vec3f world2screen(Vec3f v) {
-    return Vec3f(int((v.x+1.)*width/2.+.5), (float) int((v.y+1.)*height/2.+.5), v.z);
-}
-
 Vec3f matrix2vector(Matrix m){
     return Vec3f(m[0][0]/m[3][0], m[1][0]/m[3][0], m[2][0]/m[3][0]);
 }
@@ -160,10 +156,10 @@ int main(int argc, char** argv) {
 
     model = new Model("african_head.obj");
     Vec3f light_dir{0,0,-1};
-    float *zbuffer = new float[width*height];
+    float zbuffer[width*height];
     for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
 
-    Vec3f eye(0,0,1);
+    Vec3f eye(1,1,3);
     Vec3f center(0,0,0);
     Matrix ModelView  = lookat(eye, center, Vec3f(0,1,0));
     Matrix Projection = Matrix::identity(4);
@@ -174,15 +170,16 @@ int main(int argc, char** argv) {
         vector<int> face = model->face(i);
 
         Vec3i pts[3];
-        Vec3f world_coords[3]; 
+        //Vec3f world_coords[3]; 
         for (int j=0; j<3; j++){
             Vec3f v = model->vert(face[j]);
-            world_coords[j] = v;
+            //world_coords[j] = v;
             //pts[j] = world2screen(v);
             pts[j] = matrix2vector(ViewPort*Projection*ModelView*vector2matrix(v));
         }
 
-        Vec3f n = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]);
+        //Vec3f n = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]);
+        Vec3f n = cross(pts[2]-pts[0], pts[1]-pts[0]);
         n.normalize();
         float intensity = n*light_dir;
         if (intensity>0){
@@ -197,5 +194,25 @@ int main(int argc, char** argv) {
 
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");
+
+    /*
+    float zmin = +std::numeric_limits<float>::max();
+    float zmax = -std::numeric_limits<float>::max();
+    for(int i=width*height;i--;){
+        if (zbuffer[i]!=-std::numeric_limits<float>::max()){
+        zmin = std::min(zmin, zbuffer[i]);
+        zmax = std::max(zmax, zbuffer[i]);
+        }
+    }
+
+    //std::cerr << zmin << " " << zmax << std::endl;
+
+    TGAImage zimg(width, height, TGAImage::GRAYSCALE);
+    for(int i=width*height;i--;){
+        zimg.set(i%width, i/width, TGAColor(255*((zbuffer[i]-zmin)/(zmax-zmin)),255*((zbuffer[i]-zmin)/(zmax-zmin)),255*((zbuffer[i]-zmin)/(zmax-zmin))));
+    }
+    zimg.flip_vertically(); 
+    zimg.write_tga_file("zbuffer.tga");*/
+    
     return EXIT_SUCCESS;
 }
