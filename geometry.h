@@ -113,6 +113,7 @@ public:
     Matrix operator*(const Matrix& a);
     Matrix transpose();
     Matrix inverse();
+    Matrix operator*(const Vec4f& v);
 };
 
 #endif //__GEOMETRY_H__

@@ -20,6 +20,25 @@ const int depth = 255;
 
 Model *model;
 TGAImage image(width, height, TGAImage::RGB);
+Vec3f light_dir{0,0,-1};
+float zbuffer[width*height];
+
+/*struct GouraudShader : public IShader {
+    Vec3f varying_intensity; // written by vertex shader, read by fragment shader
+
+    virtual Vec4f vertex(int iface, int nthvert) {
+        varying_intensity[nthvert] = std::max(0.f, model->norm(iface, nthvert)*light_dir); // get diffuse lighting intensity
+        Vec4f gl_Vertex = embed<4>(model->vert(nthvert); // read the vertex from .obj file
+        return Viewport*Projection*ModelView*gl_Vertex; // transform it to screen coordinates
+    }
+
+    virtual bool fragment(Vec3f bar, TGAColor &color) {
+        float intensity = varying_intensity*bar;   // interpolate intensity for the current pixel
+        color = TGAColor(255*intensity, 255*intensity, 255*intensity); // well duh
+        return false;                              // no, we do not discard this pixel
+    }
+};*/
+
 
 void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
     bool steep = false;
@@ -86,7 +105,7 @@ void triangle(Model* model, Vec3i *pts, float *zbuffer, TGAImage &image, float i
     Vec3f P;
     for (P.x=bboxmin.x; P.x<=bboxmax.x; P.x++) {
         for (P.y=bboxmin.y; P.y<=bboxmax.y; P.y++) {
-            Vec3f bary  = barycentric(pts[0], pts[1], pts[2], P);
+            Vec3f bary = barycentric(pts[0], pts[1], pts[2], P);
             if (bary.x<0 || bary.y<0 || bary.z<0) continue;
             P.z = 0;
             P.z += pts[0].z*bary.x;
@@ -154,9 +173,8 @@ Matrix lookat(Vec3f eye, Vec3f center, Vec3f up) {
 
 int main(int argc, char** argv) {
 
-    model = new Model("african_head.obj");
-    Vec3f light_dir{0,0,-1};
-    float zbuffer[width*height];
+    model = new Model("diablo3_pose.obj");
+
     for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
 
     Vec3f eye(1,1,3);
@@ -195,7 +213,6 @@ int main(int argc, char** argv) {
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");
 
-    /*
     float zmin = +std::numeric_limits<float>::max();
     float zmax = -std::numeric_limits<float>::max();
     for(int i=width*height;i--;){
@@ -212,7 +229,7 @@ int main(int argc, char** argv) {
         zimg.set(i%width, i/width, TGAColor(255*((zbuffer[i]-zmin)/(zmax-zmin)),255*((zbuffer[i]-zmin)/(zmax-zmin)),255*((zbuffer[i]-zmin)/(zmax-zmin))));
     }
     zimg.flip_vertically(); 
-    zimg.write_tga_file("zbuffer.tga");*/
+    zimg.write_tga_file("zbuffer.tga");
     
     return EXIT_SUCCESS;
 }

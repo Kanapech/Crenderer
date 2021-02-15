@@ -114,3 +114,14 @@ std::ostream& operator<<(std::ostream& s, Matrix& m) {
     }
     return s;
 }
+
+Matrix Matrix::operator *(const Vec4f &v){
+    assert(cols == 4);
+    Matrix r(rows,1);
+    for(int i=0; i<rows; i++){
+        r[i][0] = m[i][0]*v.x+m[i][1]*v.y+m[i][2]*v.z+m[i][3];
+    }
+
+    return r;
+    
+}
