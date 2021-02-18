@@ -20,25 +20,32 @@ const int depth = 255;
 
 Model *model;
 TGAImage image(width, height, TGAImage::RGB);
-Vec3f light_dir{0,0,-1};
-float zbuffer[width*height];
+TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
+Vec3f light_dir{0, 0, 1};
+Vec3f eye(0,-1,3);
+Vec3f center(0,0,0);
+Vec3f up(0,1,0);
+//float zbuffer[width*height];
 
-/*struct GouraudShader : public IShader {
-    Vec3f varying_intensity; // written by vertex shader, read by fragment shader
+struct GouraudShader : public Shader {
+    Vec3f varying_intensity;
+    mat<2,3,float> varying_uv;
 
     virtual Vec4f vertex(int iface, int nthvert) {
+        Vec4f gl_Vertex = embed<4>(model->vert(iface, nthvert)); // read the vertex from .obj file
+        gl_Vertex = Viewport*Projection*ModelView*gl_Vertex;     // transform it to screen coordinates
         varying_intensity[nthvert] = std::max(0.f, model->norm(iface, nthvert)*light_dir); // get diffuse lighting intensity
-        Vec4f gl_Vertex = embed<4>(model->vert(nthvert); // read the vertex from .obj file
-        return Viewport*Projection*ModelView*gl_Vertex; // transform it to screen coordinates
+        varying_uv.set_col(nthvert, model->uv(iface, nthvert));
+        return gl_Vertex;
     }
 
     virtual bool fragment(Vec3f bar, TGAColor &color) {
-        float intensity = varying_intensity*bar;   // interpolate intensity for the current pixel
-        color = TGAColor(255*intensity, 255*intensity, 255*intensity); // well duh
-        return false;                              // no, we do not discard this pixel
+        float intensity = varying_intensity*bar;
+        Vec2f uv = varying_uv*bar;                 // interpolate uv for the current pixel
+        color = model->diffuse(uv)*intensity;
+        return false;
     }
-};*/
-
+};
 
 void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
     bool steep = false;
@@ -71,11 +78,7 @@ void line(int x0, int y0, int x1, int y1, TGAImage &image, TGAColor color) {
     }
 }
 
-Vec3f cross(Vec3f v1,Vec3f v2) {
-    return Vec3f{v1.y*v2.z - v1.z*v2.y, v1.z*v2.x - v1.x*v2.z, v1.x*v2.y - v1.y*v2.x};
-}
-
-Vec3f barycentric(Vec3f A, Vec3f B, Vec3f C, Vec3f P) {
+Vec3f barycentric(Vec2f A, Vec2f B, Vec2f C, Vec2f P) {
     Vec3f s[2];
     for (int i=2; i--; ) {
         s[i][0] = C[i]-A[i];
@@ -89,7 +92,7 @@ Vec3f barycentric(Vec3f A, Vec3f B, Vec3f C, Vec3f P) {
     return Vec3f(-1,1,1);
 }
 
-void triangle(Model* model, Vec3i *pts, float *zbuffer, TGAImage &image, float intensity, Vec2i* uv) {
+/*void triangle(Model* model, Vec3i *pts, Shader &shader, float *zbuffer, TGAImage &image, float intensity, Vec2i* uv) {
     Vec2i bboxmin(std::numeric_limits<int>::max(), std::numeric_limits<int>::max());
     Vec2i bboxmax(-std::numeric_limits<int>::max(), -std::numeric_limits<int>::max());
     Vec2i clamp(image.get_width()-1, image.get_height()-1);
@@ -130,6 +133,33 @@ void triangle(Model* model, Vec3i *pts, float *zbuffer, TGAImage &image, float i
             }
         }
     }
+}*/
+
+void triangle(Vec4f *pts, Shader &shader, TGAImage &image, TGAImage &zbuffer) {
+    Vec2f bboxmin( std::numeric_limits<float>::max(),  std::numeric_limits<float>::max());
+    Vec2f bboxmax(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
+    for (int i=0; i<3; i++) {
+        for (int j=0; j<2; j++) {
+            bboxmin[j] = std::min(bboxmin[j], pts[i][j]/pts[i][3]);
+            bboxmax[j] = std::max(bboxmax[j], pts[i][j]/pts[i][3]);
+        }
+    }
+    Vec2i P;
+    TGAColor color;
+    for (P.x=bboxmin.x; P.x<=bboxmax.x; P.x++) {
+        for (P.y=bboxmin.y; P.y<=bboxmax.y; P.y++) {
+            Vec3f c = barycentric(proj<2>(pts[0]/pts[0][3]), proj<2>(pts[1]/pts[1][3]), proj<2>(pts[2]/pts[2][3]), proj<2>(P));
+            float z = pts[0][2]*c.x + pts[1][2]*c.y + pts[2][2]*c.z;
+            float w = pts[0][3]*c.x + pts[1][3]*c.y + pts[2][3]*c.z;
+            int frag_depth = std::max(0, std::min(255, int(z/w+.5)));
+            if (c.x<0 || c.y<0 || c.z<0 || zbuffer.get(P.x, P.y)[0]>frag_depth) continue;
+            bool discard = shader.fragment(c, color);
+            if (!discard) {
+                zbuffer.set(P.x, P.y, TGAColor(frag_depth));
+                image.set(P.x, P.y, color);
+            }
+        }
+    }
 }
 
 Vec3f matrix2vector(Matrix m){
@@ -137,7 +167,7 @@ Vec3f matrix2vector(Matrix m){
 }
 
 Matrix vector2matrix(Vec3f v){
-    Matrix m(4, 1);
+    Matrix m;
     m[0][0] = v.x;
     m[1][0] = v.y;
     m[2][0] = v.z;
@@ -145,46 +175,32 @@ Matrix vector2matrix(Vec3f v){
     return m;
 }
 
-Matrix viewport(float x, float y, int w, int h) {
-    Matrix m = Matrix::identity(4);
-    m[0][3] = x+w/2.f;
-    m[1][3] = y+h/2.f;
-    m[2][3] = depth/2.f;
-
-    m[0][0] = w/2.f;
-    m[1][1] = h/2.f;
-    m[2][2] = depth/2.f;
-    return m;
-}
-
-Matrix lookat(Vec3f eye, Vec3f center, Vec3f up) {
-    Vec3f z = (eye-center).normalize();
-    Vec3f x = (up^z).normalize();
-    Vec3f y = (z^x).normalize();
-    Matrix res = Matrix::identity(4);
-    for (int i=0; i<3; i++) {
-        res[0][i] = x[i];
-        res[1][i] = y[i];
-        res[2][i] = z[i];
-        res[i][3] = -center[i];
-    }
-    return res;
-}
-
 int main(int argc, char** argv) {
 
     model = new Model("diablo3_pose.obj");
 
-    for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
+    //for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
 
-    Vec3f eye(1,1,3);
+    /*Vec3f eye(1,1,3);
     Vec3f center(0,0,0);
     Matrix ModelView  = lookat(eye, center, Vec3f(0,1,0));
-    Matrix Projection = Matrix::identity(4);
+    Matrix Projection = Matrix::identity();
     Matrix ViewPort = viewport(width/8, height/8, width*3/4, height*3/4);
-    Projection[3][2] = -1.f/(eye-center).norm();
+    Projection[3][2] = -1.f/(eye-center).norm();*/
+    lookat(eye, center, up);
+    viewport(width/8, height/8, width*3/4, height*3/4);
+    projection(-1.f/(eye-center).norm());
+    light_dir.normalize();
 
+    GouraudShader shader;
     for (int i=0; i<model->nbfaces(); i++) {
+        Vec4f screen_coords[3];
+        for (int j=0; j<3; j++) {
+            screen_coords[j] = shader.vertex(i, j);
+        }
+        triangle(screen_coords, shader, image, zbuffer);
+    }
+    /*or (int i=0; i<model->nbfaces(); i++) {
         vector<int> face = model->face(i);
 
         Vec3i pts[3];
@@ -205,15 +221,16 @@ int main(int argc, char** argv) {
             for(int k=0; k<3; k++){
                 uv[k] = model->uv(i, k);
             } 
-            triangle(model, pts, zbuffer, image, intensity, uv);
-            //triangle(pts, zbuffer, image, TGAColor(255*intensity, 255*intensity, 255*intensity));
+            triangle(model, pts, shader, zbuffer, image, intensity, uv);
         }
-    }
+    }*/
 
     image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
     image.write_tga_file("output.tga");
+    zbuffer.flip_vertically();
+    zbuffer.write_tga_file("zbuffer.tga");
 
-    float zmin = +std::numeric_limits<float>::max();
+    /*float zmin = +std::numeric_limits<float>::max();
     float zmax = -std::numeric_limits<float>::max();
     for(int i=width*height;i--;){
         if (zbuffer[i]!=-std::numeric_limits<float>::max()){
@@ -230,6 +247,6 @@ int main(int argc, char** argv) {
     }
     zimg.flip_vertically(); 
     zimg.write_tga_file("zbuffer.tga");
-    
+    */
     return EXIT_SUCCESS;
 }

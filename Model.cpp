@@ -69,6 +69,10 @@ Vec3f Model::vert(int i) {
     return verts_[i];
 }
 
+Vec3f Model::vert(int iface, int nthvert) {
+    return verts_[faces_[iface][nthvert][0]];
+}
+
 Vec3f Model::norm(int iface, int nvert) {
     int idx = faces_[iface][nvert][2];
     return norms_[idx].normalize();

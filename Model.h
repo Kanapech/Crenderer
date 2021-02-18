@@ -21,6 +21,7 @@ class Model {
         int nbverts();
         int nbfaces();
         Vec3f vert(int i);
+        Vec3f vert(int iface, int nthvert);
         Vec2i uv(int iface, int nvert);
         TGAColor diffuse(Vec2i uv);
         vector<int> face(int idx);
