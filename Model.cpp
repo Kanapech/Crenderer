@@ -9,7 +9,7 @@
 #include <sstream>
 using namespace std;
 
-Model::Model(string filename) : verts_(), faces_(), norms_(), uv_() {
+Model::Model(string filename) : verts_(), faces_(), norms_(), uv_(), normalmap_(), specularmap_() {
     string v, ligne;
     ifstream file(filename);
 	if (!file){
@@ -45,7 +45,9 @@ Model::Model(string filename) : verts_(), faces_(), norms_(), uv_() {
             norms_.push_back(p);
         }
     }
-    load_texture(filename, "_diffuse.tga",texture_);
+    load_texture(filename, "_diffuse.tga", texture_);
+    load_texture(filename, "_nm.tga", normalmap_);
+    load_texture(filename, "_spec.tga", specularmap_);
 }
 
 Model::~Model() {
@@ -78,6 +80,15 @@ Vec3f Model::norm(int iface, int nvert) {
     return norms_[idx].normalize();
 }
 
+Vec3f Model::normal(Vec2f uvf) {
+    Vec2i uv(uvf[0]*normalmap_.get_width(), uvf[1]*normalmap_.get_height());
+    TGAColor c = normalmap_.get(uv[0], uv[1]);
+    Vec3f res;
+    for (int i=0; i<3; i++)
+        res[2-i] = (float)c[i]/255.f*2.f - 1.f;
+    return res;
+}
+
 void Model::load_texture(string filename, const char *suffix, TGAImage &img) {
     string texfile(filename);
     size_t dot = texfile.find_last_of(".");
@@ -90,6 +101,11 @@ void Model::load_texture(string filename, const char *suffix, TGAImage &img) {
 
 TGAColor Model::diffuse(Vec2i uv) {
     return texture_.get(uv.x, uv.y);
+}
+
+float Model::specular(Vec2f uvf) {
+    Vec2i uv(uvf[0]*specularmap_.get_width(), uvf[1]*specularmap_.get_height());
+    return specularmap_.get(uv[0], uv[1])[0]/1.f;
 }
 
 Vec2i Model::uv(int iface, int nvert) {
