@@ -24,8 +24,8 @@ class Model {
         int nbfaces();
         Vec3f vert(int i);
         Vec3f vert(int iface, int nthvert);
-        Vec2i uv(int iface, int nvert);
-        TGAColor diffuse(Vec2i uv);
+        Vec2f uv(int iface, int nvert);
+        TGAColor diffuse(Vec2f uvf);
         float specular(Vec2f uvf);
         vector<int> face(int idx);
         Vec3f norm(int i, int j);

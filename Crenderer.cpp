@@ -19,13 +19,32 @@ const int height = 1000;
 Model *model;
 TGAImage image(width, height, TGAImage::RGB);
 //TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
-Vec3f light_dir(0, 0, -1);
+Vec3f light_dir(0, 0, 1);
 Vec3f eye(1, 1, 4);
 Vec3f center(0, 0, 0);
 Vec3f up(0, 1, 0);
 float zbuffer[width*height];
 float shadowbuffer[width*height];
 
+struct GouraudShader : public Shader {
+    Vec3f varying_intensity;
+    mat<2,3,float> varying_uv;
+
+    virtual Vec4f vertex(int iface, int nthvert) {
+        Vec4f gl_Vertex = embed<4>(model->vert(iface, nthvert)); // read the vertex from .obj file
+        gl_Vertex = Viewport*Projection*ModelView*gl_Vertex;     // transform it to screen coordinates
+        varying_intensity[nthvert] = std::max(0.f, model->norm(iface, nthvert)*light_dir); // get diffuse lighting intensity
+        varying_uv.set_col(nthvert, model->uv(iface, nthvert));
+        return gl_Vertex;
+    }
+
+    virtual bool fragment(Vec3f bar, TGAColor &color) {
+        float intensity = varying_intensity*bar;
+        Vec2f uv = varying_uv*bar;                 // interpolate uv for the current pixel
+        color = model->diffuse(uv)*intensity;
+        return false;
+    }
+};
 
 struct NormalShader : public Shader {
     //Vec3f varying_intensity;
@@ -49,26 +68,6 @@ struct NormalShader : public Shader {
     }
 };
 
-struct GouraudShader : public Shader {
-    Vec3f varying_intensity;
-    mat<2,3,float> varying_uv;
-
-    virtual Vec4f vertex(int iface, int nthvert) {
-        Vec4f gl_Vertex = embed<4>(model->vert(iface, nthvert)); // read the vertex from .obj file
-        gl_Vertex = Viewport*Projection*ModelView*gl_Vertex;     // transform it to screen coordinates
-        varying_intensity[nthvert] = std::max(0.f, model->norm(iface, nthvert)*light_dir); // get diffuse lighting intensity
-        varying_uv.set_col(nthvert, model->uv(iface, nthvert));
-        return gl_Vertex;
-    }
-
-    virtual bool fragment(Vec3f bar, TGAColor &color) {
-        float intensity = varying_intensity*bar;
-        Vec2f uv = varying_uv*bar;                 // interpolate uv for the current pixel
-        color = model->diffuse(uv)*intensity;
-        return false;
-    }
-};
-
 struct SpecularShader : public Shader {
     mat<2,3,float> varying_uv;  // same as above
     mat<4,4,float> uniform_M;   //  Projection*ModelView
@@ -83,56 +82,13 @@ struct SpecularShader : public Shader {
     virtual bool fragment(Vec3f bar, TGAColor &color) {
         Vec2f uv = varying_uv*bar;
         Vec3f n = proj<3>(uniform_MIT*embed<4>(model->normal(uv))).normalize();
-        Vec3f l = proj<3>(uniform_M  *embed<4>(light_dir)).normalize();
+        Vec3f l = proj<3>(uniform_M  *embed<4>(light_dir        )).normalize();
         Vec3f r = (n*(n*l*2.f) - l).normalize();   // reflected light
         float spec = pow(std::max(r.z, 0.0f), model->specular(uv));
         float diff = std::max(0.f, n*l);
         TGAColor c = model->diffuse(uv);
         color = c;
-        for (int i=0; i<3; i++) color[i] = std::min<float>(c[i]*(diff + 1*spec), 255);
-        return false;
-    }
-};
-
-struct PhongShader : public Shader {
-    mat<2,3,float> varying_uv;  // triangle uv coordinates, written by the vertex shader, read by the fragment shader
-    mat<4,3,float> varying_tri; // triangle coordinates (clip coordinates), written by VS, read by FS
-    mat<3,3,float> varying_nrm; // normal per vertex to be interpolated by FS
-    mat<3,3,float> ndc_tri;     // triangle in normalized device coordinates
-
-    virtual Vec4f vertex(int iface, int nthvert) {
-        varying_uv.set_col(nthvert, model->uv(iface, nthvert));
-        varying_nrm.set_col(nthvert, proj<3>((Projection*ModelView).invert_transpose()*embed<4>(model->norm(iface, nthvert), 0.f)));
-        Vec4f gl_Vertex = Projection*ModelView*embed<4>(model->vert(iface, nthvert));
-        varying_tri.set_col(nthvert, gl_Vertex);
-        ndc_tri.set_col(nthvert, proj<3>(gl_Vertex/gl_Vertex[3]));
-        return gl_Vertex;
-    }
-
-    virtual bool fragment(Vec3f bar, TGAColor &color) {
-        Vec3f bn = (varying_nrm*bar).normalize();
-        Vec2f uv = varying_uv*bar;
-
-        mat<3,3,float> A;
-        A[0] = ndc_tri.col(1) - ndc_tri.col(0);
-        A[1] = ndc_tri.col(2) - ndc_tri.col(0);
-        A[2] = bn;
-
-        mat<3,3,float> AI = A.invert();
-
-        Vec3f i = AI * Vec3f(varying_uv[0][1] - varying_uv[0][0], varying_uv[0][2] - varying_uv[0][0], 0);
-        Vec3f j = AI * Vec3f(varying_uv[1][1] - varying_uv[1][0], varying_uv[1][2] - varying_uv[1][0], 0);
-
-        mat<3,3,float> B;
-        B.set_col(0, i.normalize());
-        B.set_col(1, j.normalize());
-        B.set_col(2, bn);
-
-        Vec3f n = (B*model->normal(uv)).normalize();
-
-        float diff = std::max(0.f, n*light_dir);
-        color = model->diffuse(uv)*diff;
-
+        for (int i=0; i<3; i++) color[i] = std::min<float>(5 + c[i]*(diff + .6*spec), 255);
         return false;
     }
 };
@@ -151,7 +107,7 @@ struct DepthShader : public Shader {
 
     virtual bool fragment(Vec3f bar, TGAColor &color) {
         Vec3f p = varying_tri*bar;
-        color = TGAColor(255, 255, 255)*(p.z/depth);
+        color = white*(p.z/depth);
         return false;
     }
 };
@@ -184,7 +140,7 @@ struct Shade : public Shader {
         float spec = pow(std::max(r.z, 0.0f), model->specular(uv));
         float diff = std::max(0.f, n*l);
         TGAColor c = model->diffuse(uv);
-        for (int i=0; i<3; i++) color[i] = std::min<float>(20 + c[i]*shadow*(1.2*diff + .6*spec), 255);
+        for (int i=0; i<3; i++) color[i] = std::min<float>(5 + c[i]*shadow*(1.2*diff + .6*spec), 255);
         return false;
     }
 };
@@ -250,7 +206,7 @@ void triangle(Vec4f *pts, Shader &shader, TGAImage &image, float *zbuffer) {
             Vec3f c = barycentric(proj<2>(pts[0]/pts[0][3]), proj<2>(pts[1]/pts[1][3]), proj<2>(pts[2]/pts[2][3]), proj<2>(P));
             float z = pts[0][2]*c.x + pts[1][2]*c.y + pts[2][2]*c.z;
             float w = pts[0][3]*c.x + pts[1][3]*c.y + pts[2][3]*c.z;
-            int frag_depth = std::max(0, std::min(255, int(z/w+.5)));
+            float frag_depth = std::max(0.f, std::min(255.f, z/w));
             if (c.x<0 || c.y<0 || c.z<0 || zbuffer[P.x+P.y*image.get_width()]>frag_depth) continue;
             bool discard = shader.fragment(c, color);
             if (!discard) {
@@ -276,10 +232,10 @@ Matrix vector2matrix(Vec3f v){
 
 int main(int argc, char** argv) {
 
-    model = new Model("models/diablo3_pose.obj");
+    model = new Model("models/african_head.obj");
 
     
-    for (int i=width*height; i--; zbuffer[i]=shadowbuffer[i] = -std::numeric_limits<float>::max());
+    for (int i=width*height; i--; zbuffer[i]=shadowbuffer[i] = -std::numeric_limits<float>::max()){};
 
     {
         lookat(eye, center, up);
@@ -313,6 +269,10 @@ int main(int argc, char** argv) {
             }
             triangle(screen_coords, shader, image, zbuffer);
         }
+        image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
+        image.write_tga_file("output.tga");
+        //zbuffer.flip_vertically();
+        //zbuffer.write_tga_file("zbuffer.tga");
     }
 
     {
@@ -331,25 +291,6 @@ int main(int argc, char** argv) {
             }
             triangle(screen_coords, shader, image, zbuffer);
         }
-    }
-
-    {
-        lookat(eye, center, up);
-        viewport(width/8, height/8, width*3/4, height*3/4);
-        projection(-1.f/(eye-center).norm());
-        light_dir = proj<3>((Projection*ModelView*embed<4>(light_dir, 0.f))).normalize();
-        PhongShader shader;
-        for (int i=0; i<model->nbfaces(); i++) {
-            Vec4f screen_coords[3];
-            for (int j=0; j<3; j++) {
-                screen_coords[j] = shader.vertex(i, j);
-            }
-            triangle(screen_coords, shader, image, zbuffer);
-        }
-        image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
-        image.write_tga_file("output.tga");
-        //zbuffer.flip_vertically();
-        //zbuffer.write_tga_file("zbuffer.tga");
     }
 
     { // rendering the shadow buffer
