@@ -46,7 +46,7 @@ Model::Model(string filename) : verts_(), faces_(), norms_(), uv_(){
         }
     }
     load_texture(filename, "_diffuse.tga", texture_);
-    load_texture(filename, "_nm.tga", normalmap_);
+    load_texture(filename, "_nm_tangent.tga", normalmap_);
     load_texture(filename, "_spec.tga", specularmap_);
 }
 
