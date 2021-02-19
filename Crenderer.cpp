@@ -18,12 +18,13 @@ const int height = 1000;
 
 Model *model;
 TGAImage image(width, height, TGAImage::RGB);
-TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
-Vec3f light_dir(0, 0, 1);
-Vec3f eye(1, -1, 3);
+//TGAImage zbuffer(width, height, TGAImage::GRAYSCALE);
+Vec3f light_dir(0, 0, -1);
+Vec3f eye(1, 1, 4);
 Vec3f center(0, 0, 0);
 Vec3f up(0, 1, 0);
-//float zbuffer[width*height];
+float zbuffer[width*height];
+float shadowbuffer[width*height];
 
 
 struct NormalShader : public Shader {
@@ -68,7 +69,6 @@ struct GouraudShader : public Shader {
     }
 };
 
-
 struct SpecularShader : public Shader {
     mat<2,3,float> varying_uv;  // same as above
     mat<4,4,float> uniform_M;   //  Projection*ModelView
@@ -83,13 +83,108 @@ struct SpecularShader : public Shader {
     virtual bool fragment(Vec3f bar, TGAColor &color) {
         Vec2f uv = varying_uv*bar;
         Vec3f n = proj<3>(uniform_MIT*embed<4>(model->normal(uv))).normalize();
-        Vec3f l = proj<3>(uniform_M  *embed<4>(light_dir        )).normalize();
+        Vec3f l = proj<3>(uniform_M  *embed<4>(light_dir)).normalize();
         Vec3f r = (n*(n*l*2.f) - l).normalize();   // reflected light
         float spec = pow(std::max(r.z, 0.0f), model->specular(uv));
         float diff = std::max(0.f, n*l);
         TGAColor c = model->diffuse(uv);
         color = c;
-        //for (int i=0; i<3; i++) color[i] = std::min<float>(5 + c[i]*(diff + .6*spec), 255);
+        for (int i=0; i<3; i++) color[i] = std::min<float>(c[i]*(diff + 1*spec), 255);
+        return false;
+    }
+};
+
+struct PhongShader : public Shader {
+    mat<2,3,float> varying_uv;  // triangle uv coordinates, written by the vertex shader, read by the fragment shader
+    mat<4,3,float> varying_tri; // triangle coordinates (clip coordinates), written by VS, read by FS
+    mat<3,3,float> varying_nrm; // normal per vertex to be interpolated by FS
+    mat<3,3,float> ndc_tri;     // triangle in normalized device coordinates
+
+    virtual Vec4f vertex(int iface, int nthvert) {
+        varying_uv.set_col(nthvert, model->uv(iface, nthvert));
+        varying_nrm.set_col(nthvert, proj<3>((Projection*ModelView).invert_transpose()*embed<4>(model->norm(iface, nthvert), 0.f)));
+        Vec4f gl_Vertex = Projection*ModelView*embed<4>(model->vert(iface, nthvert));
+        varying_tri.set_col(nthvert, gl_Vertex);
+        ndc_tri.set_col(nthvert, proj<3>(gl_Vertex/gl_Vertex[3]));
+        return gl_Vertex;
+    }
+
+    virtual bool fragment(Vec3f bar, TGAColor &color) {
+        Vec3f bn = (varying_nrm*bar).normalize();
+        Vec2f uv = varying_uv*bar;
+
+        mat<3,3,float> A;
+        A[0] = ndc_tri.col(1) - ndc_tri.col(0);
+        A[1] = ndc_tri.col(2) - ndc_tri.col(0);
+        A[2] = bn;
+
+        mat<3,3,float> AI = A.invert();
+
+        Vec3f i = AI * Vec3f(varying_uv[0][1] - varying_uv[0][0], varying_uv[0][2] - varying_uv[0][0], 0);
+        Vec3f j = AI * Vec3f(varying_uv[1][1] - varying_uv[1][0], varying_uv[1][2] - varying_uv[1][0], 0);
+
+        mat<3,3,float> B;
+        B.set_col(0, i.normalize());
+        B.set_col(1, j.normalize());
+        B.set_col(2, bn);
+
+        Vec3f n = (B*model->normal(uv)).normalize();
+
+        float diff = std::max(0.f, n*light_dir);
+        color = model->diffuse(uv)*diff;
+
+        return false;
+    }
+};
+
+struct DepthShader : public Shader {
+    mat<3,3,float> varying_tri;
+
+    DepthShader() : varying_tri() {}
+
+    virtual Vec4f vertex(int iface, int nthvert) {
+        Vec4f gl_Vertex = embed<4>(model->vert(iface, nthvert)); // read the vertex from .obj file
+        gl_Vertex = Viewport*Projection*ModelView*gl_Vertex;          // transform it to screen coordinates
+        varying_tri.set_col(nthvert, proj<3>(gl_Vertex/gl_Vertex[3]));
+        return gl_Vertex;
+    }
+
+    virtual bool fragment(Vec3f bar, TGAColor &color) {
+        Vec3f p = varying_tri*bar;
+        color = TGAColor(255, 255, 255)*(p.z/depth);
+        return false;
+    }
+};
+
+struct Shade : public Shader {
+    mat<4,4,float> uniform_M;   //  Projection*ModelView
+    mat<4,4,float> uniform_MIT; // (Projection*ModelView).invert_transpose()
+    mat<4,4,float> uniform_Mshadow; // transform framebuffer screen coordinates to shadowbuffer screen coordinates
+    mat<2,3,float> varying_uv;  // triangle uv coordinates, written by the vertex shader, read by the fragment shader
+    mat<3,3,float> varying_tri; // triangle coordinates before Viewport transform, written by VS, read by FS
+
+    Shade(Matrix M, Matrix MIT, Matrix MS) : uniform_M(M), uniform_MIT(MIT), uniform_Mshadow(MS), varying_uv(), varying_tri() {}
+
+    virtual Vec4f vertex(int iface, int nthvert) {
+        varying_uv.set_col(nthvert, model->uv(iface, nthvert));
+        Vec4f gl_Vertex = Viewport*Projection*ModelView*embed<4>(model->vert(iface, nthvert));
+        varying_tri.set_col(nthvert, proj<3>(gl_Vertex/gl_Vertex[3]));
+        return gl_Vertex;
+    }
+
+    virtual bool fragment(Vec3f bar, TGAColor &color) {
+        Vec4f sb_p = uniform_Mshadow*embed<4>(varying_tri*bar); // corresponding point in the shadow buffer
+        sb_p = sb_p/sb_p[3];
+        int idx = int(sb_p[0]) + int(sb_p[1])*width; // index in the shadowbuffer array
+        float shadow = .3+.7*(shadowbuffer[idx]<sb_p[2]+43.34); 
+        Vec2f uv = varying_uv*bar;                 // interpolate uv for the current pixel
+        Vec3f n = proj<3>(uniform_MIT*embed<4>(model->normal(uv))).normalize(); // normal
+        Vec3f l = proj<3>(uniform_M  *embed<4>(light_dir        )).normalize(); // light vector
+        Vec3f r = (n*(n*l*2.f) - l).normalize();   // reflected light
+        float spec = pow(std::max(r.z, 0.0f), model->specular(uv));
+        float diff = std::max(0.f, n*l);
+        TGAColor c = model->diffuse(uv);
+        for (int i=0; i<3; i++) color[i] = std::min<float>(20 + c[i]*shadow*(1.2*diff + .6*spec), 255);
         return false;
     }
 };
@@ -139,7 +234,7 @@ Vec3f barycentric(Vec2f A, Vec2f B, Vec2f C, Vec2f P) {
     return Vec3f(-1,1,1);
 }
 
-void triangle(Vec4f *pts, Shader &shader, TGAImage &image, TGAImage &zbuffer) {
+void triangle(Vec4f *pts, Shader &shader, TGAImage &image, float *zbuffer) {
     Vec2f bboxmin( std::numeric_limits<float>::max(),  std::numeric_limits<float>::max());
     Vec2f bboxmax(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
     for (int i=0; i<3; i++) {
@@ -156,10 +251,10 @@ void triangle(Vec4f *pts, Shader &shader, TGAImage &image, TGAImage &zbuffer) {
             float z = pts[0][2]*c.x + pts[1][2]*c.y + pts[2][2]*c.z;
             float w = pts[0][3]*c.x + pts[1][3]*c.y + pts[2][3]*c.z;
             int frag_depth = std::max(0, std::min(255, int(z/w+.5)));
-            if (c.x<0 || c.y<0 || c.z<0 || zbuffer.get(P.x, P.y)[0]>frag_depth) continue;
+            if (c.x<0 || c.y<0 || c.z<0 || zbuffer[P.x+P.y*image.get_width()]>frag_depth) continue;
             bool discard = shader.fragment(c, color);
             if (!discard) {
-                zbuffer.set(P.x, P.y, TGAColor(frag_depth));
+                zbuffer[P.x+P.y*image.get_width()] = frag_depth;
                 image.set(P.x, P.y, color);
             }
         }
@@ -181,17 +276,11 @@ Matrix vector2matrix(Vec3f v){
 
 int main(int argc, char** argv) {
 
-    model = new Model("african_head.obj");
+    model = new Model("models/diablo3_pose.obj");
 
-    //for (int i=width*height; i--; zbuffer[i] = -std::numeric_limits<float>::max());
-
-    /*Vec3f eye(1,1,3);
-    Vec3f center(0,0,0);
-    Matrix ModelView  = lookat(eye, center, Vec3f(0,1,0));
-    Matrix Projection = Matrix::identity();
-    Matrix ViewPort = viewport(width/8, height/8, width*3/4, height*3/4);
-    Projection[3][2] = -1.f/(eye-center).norm();*/
     
+    for (int i=width*height; i--; zbuffer[i]=shadowbuffer[i] = -std::numeric_limits<float>::max());
+
     {
         lookat(eye, center, up);
         viewport(width/8, height/8, width*3/4, height*3/4);
@@ -207,9 +296,6 @@ int main(int argc, char** argv) {
             triangle(screen_coords, shader, image, zbuffer);
         }
     }
-
-    image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
-    image.write_tga_file("output.tga");
 
     {
         lookat(eye, center, up);
@@ -247,35 +333,64 @@ int main(int argc, char** argv) {
         }
     }
 
-    /*for (int i=0; i<model->nbfaces(); i++) {
-        vector<int> face = model->face(i);
-
-        Vec3i pts[3];
-        //Vec3f world_coords[3]; 
-        for (int j=0; j<3; j++){
-            Vec3f v = model->vert(face[j]);
-            //world_coords[j] = v;
-            //pts[j] = world2screen(v);
-            pts[j] = matrix2vector(ViewPort*Projection*ModelView*vector2matrix(v));
+    {
+        lookat(eye, center, up);
+        viewport(width/8, height/8, width*3/4, height*3/4);
+        projection(-1.f/(eye-center).norm());
+        light_dir = proj<3>((Projection*ModelView*embed<4>(light_dir, 0.f))).normalize();
+        PhongShader shader;
+        for (int i=0; i<model->nbfaces(); i++) {
+            Vec4f screen_coords[3];
+            for (int j=0; j<3; j++) {
+                screen_coords[j] = shader.vertex(i, j);
+            }
+            triangle(screen_coords, shader, image, zbuffer);
         }
+        image.flip_vertically(); // i want to have the origin at the left bottom corner of the image
+        image.write_tga_file("output.tga");
+        //zbuffer.flip_vertically();
+        //zbuffer.write_tga_file("zbuffer.tga");
+    }
 
-        //Vec3f n = (world_coords[2]-world_coords[0])^(world_coords[1]-world_coords[0]);
-        Vec3f n = cross(pts[2]-pts[0], pts[1]-pts[0]);
-        n.normalize();
-        float intensity = n*light_dir;
-        if (intensity>0){
-            Vec2i uv[3];
-            for(int k=0; k<3; k++){
-                uv[k] = model->uv(i, k);
-            } 
-            triangle(model, pts, shader, zbuffer, image, intensity, uv);
+    { // rendering the shadow buffer
+        TGAImage depth(width, height, TGAImage::RGB);
+        lookat(light_dir, center, up);
+        viewport(width/8, height/8, width*3/4, height*3/4);
+        projection(0);
+
+        DepthShader depthshader;
+        Vec4f screen_coords[3];
+        for (int i=0; i<model->nbfaces(); i++) {
+            for (int j=0; j<3; j++) {
+                screen_coords[j] = depthshader.vertex(i, j);
+            }
+            triangle(screen_coords, depthshader, depth, shadowbuffer);
         }
-    }*/
+        depth.flip_vertically(); // to place the origin in the bottom left corner of the image
+        depth.write_tga_file("depth.tga");
+    }
 
-    zbuffer.flip_vertically();
-    zbuffer.write_tga_file("zbuffer.tga");
+    Matrix M = Viewport*Projection*ModelView;
 
-    /*float zmin = +std::numeric_limits<float>::max();
+    { // rendering the frame buffer
+        TGAImage frame(width, height, TGAImage::RGB);
+        lookat(eye, center, up);
+        viewport(width/8, height/8, width*3/4, height*3/4);
+        projection(-1.f/(eye-center).norm());
+
+        Shade shader(ModelView, (Projection*ModelView).invert_transpose(), M*(Viewport*Projection*ModelView).invert());
+        Vec4f screen_coords[3];
+        for (int i=0; i<model->nbfaces(); i++) {
+            for (int j=0; j<3; j++) {
+                screen_coords[j] = shader.vertex(i, j);
+            }
+            triangle(screen_coords, shader, frame, zbuffer);
+        }
+        frame.flip_vertically(); // to place the origin in the bottom left corner of the image
+        frame.write_tga_file("framebuffer.tga");
+    }
+
+    float zmin = +std::numeric_limits<float>::max();
     float zmax = -std::numeric_limits<float>::max();
     for(int i=width*height;i--;){
         if (zbuffer[i]!=-std::numeric_limits<float>::max()){
@@ -292,6 +407,6 @@ int main(int argc, char** argv) {
     }
     zimg.flip_vertically(); 
     zimg.write_tga_file("zbuffer.tga");
-    */
+    
     return EXIT_SUCCESS;
 }

@@ -9,7 +9,7 @@
 #include <sstream>
 using namespace std;
 
-Model::Model(string filename) : verts_(), faces_(), norms_(), uv_(), normalmap_(), specularmap_() {
+Model::Model(string filename) : verts_(), faces_(), norms_(), uv_(){
     string v, ligne;
     ifstream file(filename);
 	if (!file){

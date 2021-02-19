@@ -13,10 +13,10 @@ void viewport(int x, int y, int w, int h) {
     Viewport = Matrix::identity();
     Viewport[0][3] = x+w/2.f;
     Viewport[1][3] = y+h/2.f;
-    Viewport[2][3] = 255.f/2.f;
+    Viewport[2][3] = depth/2.f;
     Viewport[0][0] = w/2.f;
     Viewport[1][1] = h/2.f;
-    Viewport[2][2] = 255.f/2.f;
+    Viewport[2][2] = depth/2.f;
 }
 
 void projection(float coeff) {
